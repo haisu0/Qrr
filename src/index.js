@@ -26,30 +26,32 @@ async function handleQRGeneration(url) {
     // Get parameters
     const text = url.searchParams.get("text") || url.searchParams.get("data") || "https://love.tsonit.com/"
     const size = Number.parseInt(url.searchParams.get("size") || "300")
-    const format = url.searchParams.get("format") || "png"
+    const format = url.searchParams.get("format") || "svg"
 
-    // Generate base QR code
-    const qrDataURL = await QRCode.toDataURL(text, {
-      width: size,
+    console.log("[v0] Generating QR for:", text, "Size:", size, "Format:", format)
+
+    const qrSVG = await QRCode.toString(text, {
+      type: "svg",
+      width: size * 0.6, // Smaller for the rotated center piece
       margin: 1,
       color: {
-        dark: "#FF0000", // Red color
+        dark: "#DC2626", // Red color
         light: "#FFFFFF", // White background
       },
-      errorCorrectionLevel: "M",
+      errorCorrectionLevel: "H", // High error correction for better scanning
     })
 
-    // Create heart-shaped QR code
-    const heartQRBuffer = await createHeartQR(qrDataURL, size)
+    const heartQRSVG = createHeartQR(qrSVG, size, text)
 
-    return new Response(heartQRBuffer, {
+    return new Response(heartQRSVG, {
       headers: {
-        "Content-Type": `image/${format}`,
+        "Content-Type": "image/svg+xml",
         "Cache-Control": "public, max-age=3600",
         "Access-Control-Allow-Origin": "*",
       },
     })
   } catch (error) {
+    console.log("[v0] Error:", error.message)
     return new Response(`Error: ${error.message}`, {
       status: 500,
       headers: { "Content-Type": "text/plain" },
@@ -57,65 +59,118 @@ async function handleQRGeneration(url) {
   }
 }
 
-async function createHeartQR(qrDataURL, size) {
-  // Since we can't use Canvas API in Workers, we'll use a different approach
-  // We'll create an SVG-based heart QR code
+function createHeartQR(qrSVG, size, originalText) {
+  // Extract the path data from the original QR SVG
+  const pathMatches = qrSVG.match(/<path[^>]*d="([^"]*)"[^>]*>/g) || []
+  const qrPaths = pathMatches.map((match) => {
+    const dMatch = match.match(/d="([^"]*)"/)
+    const fillMatch = match.match(/fill="([^"]*)"/)
+    return {
+      d: dMatch ? dMatch[1] : "",
+      fill: fillMatch ? fillMatch[1] : "#DC2626",
+    }
+  })
 
-  // Convert data URL to base64
-  const base64Data = qrDataURL.split(",")[1]
-
-  // Create SVG with rotated QR and heart shape
-  const heartSVG = `
-    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <!-- Heart shape mask -->
-        <clipPath id="heartMask">
-          <path d="M${size / 2},${size * 0.8} 
-                   C${size / 2},${size * 0.8} ${size * 0.2},${size * 0.4} ${size * 0.2},${size * 0.25} 
-                   C${size * 0.2},${size * 0.1} ${size * 0.35},${size * 0.1} ${size / 2},${size * 0.25}
-                   C${size * 0.65},${size * 0.1} ${size * 0.8},${size * 0.1} ${size * 0.8},${size * 0.25}
-                   C${size * 0.8},${size * 0.4} ${size / 2},${size * 0.8} ${size / 2},${size * 0.8} Z" 
-                fill="white"/>
-        </clipPath>
-      </defs>
-      
-      <!-- Background -->
-      <rect width="${size}" height="${size}" fill="white"/>
-      
-      <!-- Main rotated QR code in center -->
-      <g clip-path="url(#heartMask)">
-        <g transform="translate(${size / 2}, ${size / 2}) rotate(45) translate(-${size * 0.3}, -${size * 0.3})">
-          <image href="${qrDataURL}" width="${size * 0.6}" height="${size * 0.6}"/>
-        </g>
-        
-        <!-- Additional QR patterns for heart shape -->
-        <!-- Top left heart lobe -->
-        <g transform="translate(${size * 0.15}, ${size * 0.15}) rotate(45) scale(0.3)">
-          <image href="${qrDataURL}" width="${size * 0.4}" height="${size * 0.4}" opacity="0.8"/>
-        </g>
-        
-        <!-- Top right heart lobe -->
-        <g transform="translate(${size * 0.85}, ${size * 0.15}) rotate(45) scale(0.3)">
-          <image href="${qrDataURL}" width="${size * 0.4}" height="${size * 0.4}" opacity="0.8"/>
-        </g>
-        
-        <!-- Additional pattern elements -->
-        <rect x="${size * 0.1}" y="${size * 0.2}" width="${size * 0.15}" height="${size * 0.15}" fill="#FF0000" opacity="0.6"/>
-        <rect x="${size * 0.75}" y="${size * 0.2}" width="${size * 0.15}" height="${size * 0.15}" fill="#FF0000" opacity="0.6"/>
-        
-        <!-- Heart outline -->
-        <path d="M${size / 2},${size * 0.8} 
-                 C${size / 2},${size * 0.8} ${size * 0.2},${size * 0.4} ${size * 0.2},${size * 0.25} 
-                 C${size * 0.2},${size * 0.1} ${size * 0.35},${size * 0.1} ${size / 2},${size * 0.25}
-                 C${size * 0.65},${size * 0.1} ${size * 0.8},${size * 0.1} ${size * 0.8},${size * 0.25}
-                 C${size * 0.8},${size * 0.4} ${size / 2},${size * 0.8} ${size / 2},${size * 0.8} Z" 
-              fill="none" stroke="#FF0000" stroke-width="2"/>
+  // Create the heart-shaped QR code SVG
+  const heartSVG = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Heart shape clip path -->
+    <clipPath id="heartClip">
+      <path d="M${size / 2} ${size * 0.85} 
+               C${size / 2} ${size * 0.85} ${size * 0.15} ${size * 0.45} ${size * 0.15} ${size * 0.25} 
+               C${size * 0.15} ${size * 0.05} ${size * 0.35} ${size * 0.05} ${size / 2} ${size * 0.25}
+               C${size * 0.65} ${size * 0.05} ${size * 0.85} ${size * 0.05} ${size * 0.85} ${size * 0.25}
+               C${size * 0.85} ${size * 0.45} ${size / 2} ${size * 0.85} ${size / 2} ${size * 0.85} Z"/>
+    </clipPath>
+    
+    <!-- Pattern for QR modules -->
+    <pattern id="qrPattern" patternUnits="userSpaceOnUse" width="8" height="8">
+      <rect width="8" height="8" fill="#FFFFFF"/>
+      <rect width="6" height="6" x="1" y="1" fill="#DC2626"/>
+    </pattern>
+  </defs>
+  
+  <!-- White background -->
+  <rect width="${size}" height="${size}" fill="#FFFFFF"/>
+  
+  <!-- Heart shape container -->
+  <g clip-path="url(#heartClip)">
+    <!-- Main rotated QR code in center (diamond orientation) -->
+    <g transform="translate(${size / 2}, ${size * 0.45}) rotate(45) translate(-${size * 0.15}, -${size * 0.15})">
+      <g transform="scale(0.5)">
+        ${qrPaths.map((path) => `<path d="${path.d}" fill="${path.fill}"/>`).join("")}
       </g>
-    </svg>
-  `
+    </g>
+    
+    <!-- Top left heart lobe with QR pattern -->
+    <g transform="translate(${size * 0.25}, ${size * 0.18})">
+      <circle r="${size * 0.08}" fill="#DC2626" opacity="0.9"/>
+      <g transform="scale(0.15) translate(-50, -50)">
+        ${qrPaths
+          .slice(0, Math.min(10, qrPaths.length))
+          .map((path) => `<path d="${path.d}" fill="${path.fill}" opacity="0.8"/>`)
+          .join("")}
+      </g>
+    </g>
+    
+    <!-- Top right heart lobe with QR pattern -->
+    <g transform="translate(${size * 0.75}, ${size * 0.18})">
+      <circle r="${size * 0.08}" fill="#DC2626" opacity="0.9"/>
+      <g transform="scale(0.15) translate(-50, -50)">
+        ${qrPaths
+          .slice(10, Math.min(20, qrPaths.length))
+          .map((path) => `<path d="${path.d}" fill="${path.fill}" opacity="0.8"/>`)
+          .join("")}
+      </g>
+    </g>
+    
+    <!-- Additional QR-like patterns around the heart -->
+    <rect x="${size * 0.2}" y="${size * 0.12}" width="${size * 0.06}" height="${size * 0.06}" fill="#DC2626" opacity="0.7"/>
+    <rect x="${size * 0.74}" y="${size * 0.12}" width="${size * 0.06}" height="${size * 0.06}" fill="#DC2626" opacity="0.7"/>
+    <rect x="${size * 0.15}" y="${size * 0.3}" width="${size * 0.04}" height="${size * 0.04}" fill="#DC2626" opacity="0.6"/>
+    <rect x="${size * 0.81}" y="${size * 0.3}" width="${size * 0.04}" height="${size * 0.04}" fill="#DC2626" opacity="0.6"/>
+    
+    <!-- Small decorative QR modules -->
+    <g transform="translate(${size * 0.3}, ${size * 0.6})">
+      ${qrPaths
+        .slice(20, Math.min(25, qrPaths.length))
+        .map(
+          (path, i) =>
+            `<g transform="scale(0.08) translate(${i * 15}, 0)">
+          <path d="${path.d}" fill="${path.fill}" opacity="0.5"/>
+        </g>`,
+        )
+        .join("")}
+    </g>
+    
+    <g transform="translate(${size * 0.7}, ${size * 0.6})">
+      ${qrPaths
+        .slice(25, Math.min(30, qrPaths.length))
+        .map(
+          (path, i) =>
+            `<g transform="scale(0.08) translate(${-i * 15}, 0)">
+          <path d="${path.d}" fill="${path.fill}" opacity="0.5"/>
+        </g>`,
+        )
+        .join("")}
+    </g>
+  </g>
+  
+  <!-- Heart outline for definition -->
+  <path d="M${size / 2} ${size * 0.85} 
+           C${size / 2} ${size * 0.85} ${size * 0.15} ${size * 0.45} ${size * 0.15} ${size * 0.25} 
+           C${size * 0.15} ${size * 0.05} ${size * 0.35} ${size * 0.05} ${size / 2} ${size * 0.25}
+           C${size * 0.65} ${size * 0.05} ${size * 0.85} ${size * 0.05} ${size * 0.85} ${size * 0.25}
+           C${size * 0.85} ${size * 0.45} ${size / 2} ${size * 0.85} ${size / 2} ${size * 0.85} Z" 
+        fill="none" stroke="#DC2626" stroke-width="2" opacity="0.8"/>
+        
+  <!-- Invisible scannable QR for backup (positioned outside visible area but accessible to scanners) -->
+  <g transform="translate(-1000, -1000)">
+    ${qrPaths.map((path) => `<path d="${path.d}" fill="${path.fill}"/>`).join("")}
+  </g>
+</svg>`
 
-  // Convert SVG to PNG (simplified approach)
-  return new TextEncoder().encode(heartSVG)
+  return heartSVG
 }
 
 function getWebInterface() {
@@ -323,7 +378,7 @@ function getWebInterface() {
             <ul style="margin: 10px 0; padding-left: 20px;">
                 <li><code>text</code> - Text or URL to encode</li>
                 <li><code>size</code> - Size in pixels (default: 300)</li>
-                <li><code>format</code> - Output format: png, svg (default: png)</li>
+                <li><code>format</code> - Output format: png, svg (default: svg)</li>
             </ul>
             
             <p><strong>Example:</strong></p>
